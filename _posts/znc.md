@@ -1,0 +1,108 @@
+---
+layout: post
+title: ZNC on Google Compute Engine
+---
+
+#Using ZNC on Google Compute Engine
+
+[ZNC](https://wiki.znc.in") is an IRC bouncer. It connects to an IRC server on
+your behalf, and then you connect to ZNC as if it were that server. Normally,
+you can only _join_ and _part_ channels, but ZNC supports a third state:
+detached. When a channel is detached, ZNC is still connected to that channel on
+your behalf, but your client is disconnected from that channel in ZNC. ZNC will
+keep a buffer of all the messages sent, and replay them for you next time you
+attach (join).
+
+The other great benefit of ZNC is that it masks your IP address. This is
+particularly helpful if certain IRC networks (i.e. Freenode) block VPN IPs.
+Connecting using ZNC, the IRC network only sees your ZNC server's IP, and not
+the one you use to connect to ZNC. One ZNC server can support many users, so
+once you set up your ZNC server you can open it up to your friends, too. The
+`partyline` module for ZNC even allows you to create channels that exist only
+on your ZNC server.
+
+##Setup
+[GCE](https://cloud.google.com/compute/) is Google's IaaS offering. As a new
+user, you start with $300 USD of free server credit, plus you can always run
+the smallest-sized server 24/7 for free. ZNC is pretty tiny, and latency isn't
+really a concern with IRC, so the smallest size is plenty for running a ZNC
+server.
+
+I started off by creating a new Debian Stretch VM instance. A quick check
+revealed that `apt`'s version of ZNC is out of date by several years, so I
+opted to build it myself. I ran across plenty of problems because of this,
+since I accidentally built it without SSL support. Here are instructions for
+building ZNC from source *with SSL*:
+
+	sudo apt install openssl-dev
+	wget https://znc.in/releases/znc-1.6.5.tar.gz
+	tar -xvzf znc-1.6.5.tar.gz
+	cd znc-1.6.5
+	./configure --with-openssl
+	make
+	sudo make install
+
+Now ZNC should be installed to `/usr/local`. No need to update the `PATH`, just
+fire it up:
+
+	znc --makeconf
+
+It will ask you some questions about how you want ZNC configured. I chose to
+set it up with SSL on port 9999. Port 6697 is traditionally the port for IRC
+over SSL, but ZNC also has a webadmin module that comes enabled by default, and
+allows you to do many things that normally require you to stop ZNC, edit the
+config files manually, then restart ZNC. Chrome refuses to connect to port 6697
+at all (though apparently you can override this behaviour), so port 9999 (which
+is also a traditional port for IRC over SSL) is a good stand-in that Chrome has
+no issue with.
+
+Now we are almost ready to connect to our ZNC server. One thing remains:
+allowing traffic through the firewall to ZNC. Typically, we would do this by
+using `iptables`, but running `sudo iptables list` on your GCE instance
+will reveal that the default iptables rules simply allow all traffic.  GCE
+instead uses its own firewall at a project level, so open up your console to
+[`VPC network -&gt; Firewall
+rules`](https://console.cloud.google.com/networking/firewalls) and create a new
+rule allowing incoming TCP traffic to port 9999. You might as well use the
+source filters to only allow your own IP, or a range of IPs you're likely to
+connect from.  Outgoing traffic from GCE instances is allowed by default, so
+we're done here.
+
+Now steer your browser toward your instance's external IP on port 9999, and you
+should see the ZNC web interface. Note that ZNC just creates its own SSL
+certificate, so Chrome will give a `NET::ERR_CERT_AUTHORITY_INVALID` warning
+you that the site is not secure. This is to be expected; click through to your
+web interface. You use the same username and password to log into this web
+interface as you do to log into your ZNC server as an IRC user, so it's
+important that both use SSL.
+
+##Connecting
+
+Connect to your ZNC server using the username and password you chose. If it's
+configured to use SSL, then it will only connect using SSL, and similar if it's
+configured to not use SSL. It will just mysteriously time out while connecting
+if you have the SSL settings mismatched, so watch out!  It can be helpful to
+set a MOTD in the web interface so that you get some indication that you have
+properly connected to ZNC.
+
+ZNC can be controlled by users over IRC. This is done by sending
+[command](https://wiki.znc.in/Using_commands) messages to the special user
+`*status`, or by prefixing the commands with `/znc`. For example, to detach
+from channel `#znc`, you can write either of the following:
+
+	/msg *status detach #znc
+	/znc detach #znc
+
+ZNC should at this point be connected to the server you specified when you ran
+it with the `--makeconf` option. Once you're connected to ZNC, you will
+hopefully find that this is the case. If not, then you can use the
+`connect</tt> and <tt>jump` commands to get ZNC to connect to a server, or try
+the next one in the list (if you gave it more than one server). Note that ZNC
+expects all of these servers to be for the same network: for example, you might
+tell ZNC that EFNet can be found at `irc.efnet.net`, `irc.mzima.net`, and
+`irc.inet.tele.dk`. ZNC will complain if the certificate for a server doesn't
+match the server's domain, which will happen if you connect to a domain like
+`irc.efnet.net`, which redirects to other EFNet servers. You can either
+explicitly trust the certs, or just connect directly to the server you're
+redirected to.
+

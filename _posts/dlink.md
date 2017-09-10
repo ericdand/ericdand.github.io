@@ -1,0 +1,59 @@
+---
+layout: post
+title: DLink DIR-820L Firmware Reversing
+---
+
+This page is a collection of project notes, and may not be useful for
+anyone but me. Hopefully it's useful to you too.
+
+#Unpacking the Latest Firmware
+
+You can find the latest DIR-820L firmware on D-Link's FTP server:
+
+	ftp://ftp.dlink.ca/PRODUCTS/DIR-820L/DIR-820L_REVA_FIRMWARE_1.06B01.BIN
+
+My router's hardware revision is A, so I got that one.
+
+First, we can take a look at the firmware using binwalk:
+
+	![binwalk](/images/binwalk.png)
+
+We can see that it has 3 parts: two LZMA-compressed chunks of data, then a
+Squashfs filesystem. According to my readings, the first two chunks are a
+bootloader to unpack and install the Squashfs chunk. So we look at that.
+
+`binwalk -e &lt;file&gt;` can be used to extract from a file.  However, doing
+this on my Mac resulted in a big jumble of files -- it failed to properly
+unpack the SquashFS file. However, one thing that it did successfully do was
+pull out a file called "144822.squashfs". This turned out to be just the
+SquashFS file without the preceding data. This was easier than seperating the
+file using `dd` (what block size am I supposed to use again?), and less hacky
+than just writing a Python or C program to do it for me.
+
+###Unpacking the SquashFS File
+
+Unpacking the file proved to be an enormous challenge. For reasons I still
+don't entirely understand, the regular `unsquashfs` tool included in
+`squashfs-tools` couldn't unpack the file. (I suspect DIY customizations to the
+SquashFS format and/or the LZMA compression algorithm by D-Link are the
+culprit). Furthermore, LZMA compression still isn't supported by the Linux
+kernel, so no using `mount` to just mount the filesystem. So I had to turn to
+[`sasquatch`](https://github.com/devttys0/sasquatch).
+
+After booting up a Linux VM and following the install instructions for
+`sasquatch`, I was finally able to unpack the file using the
+following incantation:
+	
+	sasquatch -p 1 -le -f -li 144822.squashfs
+
+After looking through the firmware, it seems most pages of interest are POST
+requests sent to various `*.cgi` pages. But where are these handled? MIPS
+binaries don't have a lot of love from decompilers and RE tools. Thankfully,
+somebody else has [done the work for
+me](https://github.com/darkarnium/secpub/tree/master/Multivendor/ncc2): the
+`ncc2` program handles most POST requests. Solid. My router is patched to the
+latest firmware, so presumably the vulnerabilities on that GitHub page have
+been patched... right?
+
+More later, once I get time to play with ncc2.
+
